@@ -71,12 +71,8 @@ def main():
     loop_count = 1
     max_retries = 3
     levels_won = 0
-    i = 0
-    number_of_levels_to_win = 60
 
-    # while True:
-    while i < number_of_levels_to_win:
-        i += 1
+    while True:
         print(f"\n--- Loop {loop_count} ---")
 
         retry_count = 0
