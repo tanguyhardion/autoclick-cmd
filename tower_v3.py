@@ -7,9 +7,17 @@ from PIL import ImageGrab
 import pyautogui
 from pywinauto.application import Application
 from utils.email_sender import send_email
+import threading
+import base64
+from io import BytesIO
 
 API_URL = os.getenv("API_URL", "http://localhost:3001/api")
 MASTER_PASSWORD = os.getenv("MASTER_PASSWORD")
+
+# Globals for thread communication
+CURRENT_COMMAND = "WAIT"
+CURRENT_SERVER_LEVEL = 1
+HEARTBEAT_LOCK = threading.Lock()
 
 # OCR Config
 reader = easyocr.Reader(['en'])
@@ -69,14 +77,43 @@ def get_ocr_level():
         log(f"OCR failed to parse level from '{text}', defaulting to 1")
         return 1
 
+def take_and_upload_screenshot():
+    log("Taking requested screenshot...")
+    try:
+        # focus_kings_call() # Optional: ensure window is visible
+        img = ImageGrab.grab()
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=60)
+        img_str = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode()
+        
+        api_post("bot/upload_screenshot", { "image": img_str })
+        log("Screenshot uploaded.")
+    except Exception as e:
+        log(f"Screenshot failed: {e}")
+
+def heartbeat_thread_func():
+    global CURRENT_COMMAND, CURRENT_SERVER_LEVEL
+    log("Heartbeat thread started.")
+    while True:
+        try:
+            res = api_post("bot/heartbeat", {})
+            if res and res.get("success"):
+                data = res.get("data", {})
+                with HEARTBEAT_LOCK:
+                    CURRENT_COMMAND = data.get("command", "WAIT")
+                    CURRENT_SERVER_LEVEL = data.get("current_level", 1)
+                
+                if data.get("trigger_screenshot"):
+                    take_and_upload_screenshot()
+        except Exception as e:
+            log(f"Heartbeat Loop Error: {e}")
+        
+        time.sleep(2)
+
 def check_backend_instruction():
-    # Returns (command, server_level)
-    # command: CONTINUE, WAIT, STOP
-    res = api_post("bot/heartbeat", {})
-    if res and res.get("success"):
-        data = res.get("data", {})
-        return data.get("command", "WAIT"), data.get("current_level", 1)
-    return "WAIT", 1
+    # Returns (command, server_level) from local cache (updated by thread)
+    with HEARTBEAT_LOCK:
+        return CURRENT_COMMAND, CURRENT_SERVER_LEVEL
 
 def report_outcome(result, level, duration):
     log(f"Reporting {result} for Level {level} (Duration: {duration:.2f}s)")
@@ -137,6 +174,10 @@ def handle_rewards():
 def main():
     log("Initializing Tower V3 Bot...")
     focus_kings_call()
+
+    # Start Heartbeat Thread
+    t = threading.Thread(target=heartbeat_thread_func, daemon=True)
+    t.start()
     
     # 1. Detect Level
     current_level = get_ocr_level()
@@ -147,18 +188,14 @@ def main():
     levels_since_email = 0
     
     while True:
-        # Check Backend
+        # Check Backend (from cache)
         cmd, server_accepted_level = check_backend_instruction()
         
         if cmd == "STOP":
-            log("Backend said STOP. Exiting.")
-            break
-            
-        if cmd == "WAIT":
-            log("Backend said WAIT/IDLE. Sleeping 5s...")
+            log("Backend said STOP. Idling...")
             time.sleep(5)
             continue
-            
+
         # cmd == "CONTINUE" -> We are allowed to play.
         # We use our local current_level tracker, but we could sync with server if we wanted.
         # Requirement: "Increment locally, Sync updates to the backend"
