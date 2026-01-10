@@ -188,6 +188,12 @@ def main():
     levels_since_email = 0
     
     while True:
+        # Check if reached final level (100)
+        if current_level > 100:
+            log("Reached level 100! Bot completed all levels. Idling indefinitely...")
+            time.sleep(5)
+            continue
+        
         # Check Backend (from cache)
         cmd, server_accepted_level = check_backend_instruction()
         
