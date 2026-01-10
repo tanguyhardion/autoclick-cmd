@@ -5,3 +5,4 @@ Pillow
 pyautogui
 pywinauto
 python-dotenv
+pynput

@@ -21,8 +21,8 @@ HEARTBEAT_LOCK = threading.Lock()
 
 # OCR Config
 reader = easyocr.Reader(['en'])
-SQUARE_TOP_LEFT = (829, 288)
-SQUARE_BOTTOM_RIGHT = (862, 317)
+SQUARE_TOP_LEFT = (810, 287)
+SQUARE_BOTTOM_RIGHT = (870, 321)
 
 # Game Config
 START_CONTINUE_POS = (1434, 732)
