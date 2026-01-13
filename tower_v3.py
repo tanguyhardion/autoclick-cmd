@@ -17,6 +17,7 @@ MASTER_PASSWORD = os.getenv("MASTER_PASSWORD")
 # Globals for thread communication
 CURRENT_COMMAND = "WAIT"
 CURRENT_SERVER_LEVEL = 1
+TARGET_LEVEL = 0
 HEARTBEAT_LOCK = threading.Lock()
 
 # OCR Config
@@ -102,6 +103,7 @@ def heartbeat_thread_func():
                 with HEARTBEAT_LOCK:
                     CURRENT_COMMAND = data.get("command", "WAIT")
                     CURRENT_SERVER_LEVEL = data.get("current_level", 1)
+                    TARGET_LEVEL = data.get("target_level", 0)
                 
                 if data.get("trigger_screenshot"):
                     take_and_upload_screenshot()
@@ -111,9 +113,9 @@ def heartbeat_thread_func():
         time.sleep(2)
 
 def check_backend_instruction():
-    # Returns (command, server_level) from local cache (updated by thread)
+    # Returns (command, server_level, target_level) from local cache (updated by thread)
     with HEARTBEAT_LOCK:
-        return CURRENT_COMMAND, CURRENT_SERVER_LEVEL
+        return CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL
 
 def report_outcome(result, level, duration):
     log(f"Reporting {result} for Level {level} (Duration: {duration:.2f}s)")
@@ -188,14 +190,20 @@ def main():
     levels_since_email = 0
     
     while True:
-        # Check if reached final level (100)
+        # Check Backend (from cache)
+        cmd, server_accepted_level, target_level = check_backend_instruction()
+
+        # Check if reached target level (if set > 0)
+        if target_level > 0 and current_level >= target_level:
+            log(f"Reached target level {target_level} (Current: {current_level}). Bot paused.")
+            time.sleep(5)
+            continue
+        
+        # Check if reached final level (100) - legacy hard limit
         if current_level > 100:
             log("Reached level 100! Bot completed all levels. Idling indefinitely...")
             time.sleep(5)
             continue
-        
-        # Check Backend (from cache)
-        cmd, server_accepted_level = check_backend_instruction()
         
         if cmd == "STOP":
             log("Backend said STOP. Idling...")
