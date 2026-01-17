@@ -190,20 +190,17 @@ def main():
     levels_since_email = 0
     
     while True:
-        # Check Backend (from cache)
-        cmd, server_accepted_level, target_level = check_backend_instruction()
-
-        # Check if reached target level (if set > 0)
-        if target_level > 0 and current_level >= target_level:
-            log(f"Reached target level {target_level} (Current: {current_level}). Bot paused.")
+        # Check if reached target level
+        with HEARTBEAT_LOCK:
+            target = TARGET_LEVEL
+        
+        if target > 0 and current_level >= target:
+            log(f"Reached target level {target}! Bot completed assigned levels. Idling...")
             time.sleep(5)
             continue
         
-        # Check if reached final level (100) - legacy hard limit
-        if current_level > 100:
-            log("Reached level 100! Bot completed all levels. Idling indefinitely...")
-            time.sleep(5)
-            continue
+        # Check Backend (from cache)
+        cmd, _, _ = check_backend_instruction()
         
         if cmd == "STOP":
             log("Backend said STOP. Idling...")
