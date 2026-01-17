@@ -10,8 +10,29 @@ from utils.email_sender import send_email
 import threading
 import base64
 from io import BytesIO
+import socket
 
-API_URL = os.getenv("API_URL", "http://localhost:3001/api")
+def is_local_backend_available():
+    """Check if local backend at localhost:3001 is accessible"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('localhost', 3001))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+# Determine API URL based on local backend availability
+if is_local_backend_available():
+    API_URL = "http://localhost:3001/api"
+    print("[Bot] Using LOCAL development API")
+else:
+    API_URL = os.getenv("API_URL")
+    if not API_URL:
+        raise ValueError("API_URL environment variable not set and local backend not available")
+    print(f"[Bot] Using PRODUCTION API: {API_URL}")
+
 MASTER_PASSWORD = os.getenv("MASTER_PASSWORD")
 
 # Globals for thread communication
@@ -93,7 +114,7 @@ def take_and_upload_screenshot():
         log(f"Screenshot failed: {e}")
 
 def heartbeat_thread_func():
-    global CURRENT_COMMAND, CURRENT_SERVER_LEVEL
+    global CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL
     log("Heartbeat thread started.")
     while True:
         try:
@@ -175,6 +196,11 @@ def handle_rewards():
 
 def main():
     log("Initializing Tower V3 Bot...")
+    
+    # Reset levels completed on launch
+    log("Resetting levels completed count...")
+    api_post("control/reset_levels", {})
+    
     focus_kings_call()
 
     # Start Heartbeat Thread
