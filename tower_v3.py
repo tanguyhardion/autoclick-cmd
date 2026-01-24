@@ -39,6 +39,7 @@ MASTER_PASSWORD = os.getenv("MASTER_PASSWORD")
 CURRENT_COMMAND = "WAIT"
 CURRENT_SERVER_LEVEL = 1
 TARGET_LEVEL = 0
+TRIGGER_RELAUNCH = False
 HEARTBEAT_LOCK = threading.Lock()
 
 # OCR Config
@@ -114,7 +115,7 @@ def take_and_upload_screenshot():
         log(f"Screenshot failed: {e}")
 
 def heartbeat_thread_func():
-    global CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL
+    global CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL, TRIGGER_RELAUNCH
     log("Heartbeat thread started.")
     while True:
         try:
@@ -125,6 +126,7 @@ def heartbeat_thread_func():
                     CURRENT_COMMAND = data.get("command", "WAIT")
                     CURRENT_SERVER_LEVEL = data.get("current_level", 1)
                     TARGET_LEVEL = data.get("target_level", 0)
+                    TRIGGER_RELAUNCH = data.get("trigger_relaunch", False)
                 
                 if data.get("trigger_screenshot"):
                     take_and_upload_screenshot()
@@ -134,9 +136,63 @@ def heartbeat_thread_func():
         time.sleep(2)
 
 def check_backend_instruction():
-    # Returns (command, server_level, target_level) from local cache (updated by thread)
+    # Returns (command, server_level, target_level, trigger_relaunch) from local cache (updated by thread)
     with HEARTBEAT_LOCK:
-        return CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL
+        return CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL, TRIGGER_RELAUNCH
+
+def relaunch_game():
+    log("Relaunching game...")
+    try:
+        # Kill the game process
+        log("Killing Game.exe...")
+        os.system("taskkill /f /im Game.exe")
+        time.sleep(2)
+        
+        # Launch via Steam
+        log("Launching game via Steam...")
+        os.system("start steam://rungameid/2674290")
+        
+        # Wait for game to load
+        log("Waiting 30 seconds for game to load...")
+        time.sleep(30)
+        
+        # Click sequence to navigate through menus
+        log("Clicking at (967, 814)...")
+        pyautogui.click(967, 814)
+        
+        log("Waiting 1 minute...")
+        time.sleep(60)
+        
+        log("Clicking at (1679, 208)...")
+        pyautogui.click(1679, 208)
+        time.sleep(1)
+        
+        log("Clicking at (879, 587)...")
+        pyautogui.click(879, 587)
+        time.sleep(1)
+        
+        log("Clicking at (675, 412)...")
+        pyautogui.click(675, 412)
+        time.sleep(1)
+        
+        log("Clicking at (769, 719)...")
+        pyautogui.click(769, 719)
+        time.sleep(1)
+        
+        # Clear the relaunch flag
+        log("Clearing relaunch flag...")
+        api_post("bot/heartbeat", {})
+        
+        # Reset the local flag
+        global TRIGGER_RELAUNCH
+        with HEARTBEAT_LOCK:
+            TRIGGER_RELAUNCH = False
+        
+        log("Game relaunch complete. Ready to resume.")
+        return True
+    except Exception as e:
+        log(f"Error during relaunch: {e}")
+        return False
 
 def report_outcome(result, level, duration):
     log(f"Reporting {result} for Level {level} (Duration: {duration:.2f}s)")
@@ -163,6 +219,12 @@ def play_level(level_number):
     log(f"Waiting for game end (watched color: {initial_color})...")
 
     while True:
+        # Check for relaunch request during gameplay
+        _, _, _, should_relaunch = check_backend_instruction()
+        if should_relaunch:
+            log("Relaunch requested during gameplay, aborting level...")
+            return None, 0  # Special return value to signal relaunch
+        
         current_color = get_pixel_color(*WON_LOST_POS)
         if current_color != initial_color:
             break
@@ -216,6 +278,17 @@ def main():
     levels_since_email = 0
     
     while True:
+        # Check if relaunch requested
+        _, _, _, should_relaunch = check_backend_instruction()
+        if should_relaunch:
+            success = relaunch_game()
+            if success:
+                # Re-detect level after relaunch
+                focus_kings_call()
+                current_level = get_ocr_level()
+                log(f"After relaunch, detected level: {current_level}")
+            continue
+        
         # Check if reached target level
         with HEARTBEAT_LOCK:
             target = TARGET_LEVEL
@@ -226,7 +299,7 @@ def main():
             continue
         
         # Check Backend (from cache)
-        cmd, _, _ = check_backend_instruction()
+        cmd, _, _, _ = check_backend_instruction()
         
         if cmd == "STOP":
             log("Backend said STOP. Idling...")
@@ -237,7 +310,14 @@ def main():
         # We use our local current_level tracker, but we could sync with server if we wanted.
         # Requirement: "Increment locally, Sync updates to the backend"
         
-        won, duration = play_level(current_level)
+        result = play_level(current_level)
+        
+        # Handle relaunch during gameplay
+        if result[0] is None:
+            log("Level aborted due to relaunch request")
+            continue  # Go back to top of loop which will handle the relaunch
+        
+        won, duration = result
         
         if won:
             report_outcome("WIN", current_level, duration)
