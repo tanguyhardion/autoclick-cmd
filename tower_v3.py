@@ -140,16 +140,22 @@ def check_backend_instruction():
     with HEARTBEAT_LOCK:
         return CURRENT_COMMAND, CURRENT_SERVER_LEVEL, TARGET_LEVEL, TRIGGER_RELAUNCH
 
-def relaunch_game():
-    log("Relaunching game...")
+def kill_game():
+    """Kill the game process"""
+    log("Killing Game.exe...")
     try:
-        # Kill the game process
-        log("Killing Game.exe...")
         os.system("taskkill /f /im Game.exe")
         time.sleep(2)
-        
-        # Launch via Steam
-        log("Launching game via Steam...")
+        log("Game process killed.")
+        return True
+    except Exception as e:
+        log(f"Error killing game: {e}")
+        return False
+
+def launch_game():
+    """Launch the game via Steam and navigate through menus"""
+    log("Launching game via Steam...")
+    try:
         os.system("start steam://rungameid/2674290")
         
         # Wait for game to load
@@ -179,20 +185,33 @@ def relaunch_game():
         pyautogui.click(769, 719)
         time.sleep(1)
         
-        # Clear the relaunch flag
-        log("Clearing relaunch flag...")
-        api_post("bot/heartbeat", {})
-        
-        # Reset the local flag
-        global TRIGGER_RELAUNCH
-        with HEARTBEAT_LOCK:
-            TRIGGER_RELAUNCH = False
-        
-        log("Game relaunch complete. Ready to resume.")
+        log("Game launch complete.")
         return True
     except Exception as e:
-        log(f"Error during relaunch: {e}")
+        log(f"Error during launch: {e}")
         return False
+
+def relaunch_game():
+    """Kill and relaunch the game"""
+    log("Relaunching game...")
+    
+    if not kill_game():
+        return False
+    
+    if not launch_game():
+        return False
+    
+    # Clear the relaunch flag
+    log("Clearing relaunch flag...")
+    api_post("bot/heartbeat", {})
+    
+    # Reset the local flag
+    global TRIGGER_RELAUNCH
+    with HEARTBEAT_LOCK:
+        TRIGGER_RELAUNCH = False
+    
+    log("Game relaunch complete. Ready to resume.")
+    return True
 
 def report_outcome(result, level, duration):
     log(f"Reporting {result} for Level {level} (Duration: {duration:.2f}s)")
@@ -258,6 +277,9 @@ def handle_rewards():
 
 def main():
     log("Initializing Tower V3 Bot...")
+    
+    # Launch the game on script start
+    launch_game()
     
     # Reset levels completed on launch
     log("Resetting levels completed count...")
